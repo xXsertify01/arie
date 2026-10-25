@@ -4,3 +4,5 @@ flipper apps html golf app and a python script for a messed-up game also have fm
 the parmaster is a app for golf on a flipper zero works on momentum firmware 12.
 the text editor is also for flipper; text editor has a lot in it for a small portable text editor but limited as hell though I didn't think it threw when I made it now I haft to rewrite hundreds of lines of code.
 ill haft to give more info on how to use it later
+so the nexus sub and html go together and it's not done yet either 
+I'm sorry nothing I do is complete. 
