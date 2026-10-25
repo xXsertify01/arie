@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nexus TH RAW Decoder</title>
+  <style>
+    body {
+      max-width: 50rem;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      font: 1rem/1.5 system-ui, sans-serif;
+    }
+
+    pre {
+      padding: 1rem;
+      background: #f3f4f6;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    input {
+      margin: 0.5rem 0 1rem;
+    }
+  </style>
+</head>
+<body>
+  <h1>Nexus TH RAW Decoder</h1>
+  <p>Select a Flipper Sub-GHz RAW <code>.sub</code> file.</p>
+  <input id="file" type="file" accept=".sub,.txt">
+  <pre id="out">Choose a file to decode.</pre>
+
+  <script>
+    const fileInput = document.querySelector("#file");
+    const output = document.querySelector("#out");
+
+    fileInput.addEventListener("change", async event => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+
+      try {
+        output.textContent = decodeRaw(await file.text());
+      } catch (error) {
+        output.textContent = "Error: " + error.message;
+      }
+    });
+
+    function decodeRaw(text) {
+      const rawLines = text.match(/^RAW_Data:.*$/gmi) || [];
+      if (!rawLines.length) {
+        throw new Error("No RAW_Data lines found.");
+      }
+
+      // RAW_Data durations: positive = pulse, negative = gap.
+      const durations = rawLines.flatMap(line => {
+        const colon = line.indexOf(":");
+        return (line.slice(colon + 1).match(/-?\d+/g) || []).map(Number);
+      });
+
+      if (durations.length < 4) {
+        throw new Error("Not enough RAW_Data timings to decode.");
+      }
+
+      // Use TE if supplied; otherwise estimate it from likely short pulses.
+      const teMatch = text.match(/^TE:\s*(\d+)/mi);
+      const pulseSamples = durations
+        .filter(value => value >= 350 && value <= 750)
+        .sort((a, b) => a - b);
+
+      if (!teMatch && pulseSamples.length === 0) {
+        throw new Error("No TE field or likely carrier pulses found.");
+      }
+
+      const te = teMatch
+        ? Number(teMatch[1])
+        : pulseSamples[Math.floor(pulseSamples.length / 2)];
+
+      if (!Number.isFinite(te) || te <= 0) {
+        throw new Error("Invalid TE value.");
+      }
+
+      const completeFrames = [];
+      const rejectedFrames = [];
+      let bits = [];
+      let malformedPairs = 0;
+      let frameBoundaries = 0;
+
+      function saveRun(reason) {
+        if (bits.length === 36) {
+          const bitString = bits.join("");
+          const frame = BigInt("0b" + bitString);
+          const fixedNibble = Number((frame >> 8n) & 0xFn);
+
+          const entry = {
+            frame,
+            bitString,
+            fixedNibble,
+            reason
+          };
+
+          if (fixedNibble === 0xF) {
+            completeFrames.push(entry);
+          } else {
+            rejectedFrames.push(entry);
+          }
+        } else if (bits.length > 0) {
+          rejectedFrames.push({
+            bitString: bits.join(""),
+            reason: `${bits.length} bits; expected 36`
+          });
+        }
+
+        bits = [];
+      }
+
+      // Timings are interpreted as pulse/gap pairs.
+      for (let i = 0; i + 1 < durations.length; i += 2) {
+        const pulse = durations[i];
+        const gap = durations[i + 1];
+
+        if (pulse <= 0 || gap >= 0) {
+          malformedPairs++;
+          saveRun("invalid pulse/gap polarity");
+          continue;
+        }
+
+        const pulseUnits = pulse / te;
+        const gapUnits = Math.abs(gap) / te;
+
+        // A long gap marks a possible frame boundary.
+        if (gapUnits >= 6) {
+          frameBoundaries++;
+          saveRun("long-gap boundary");
+          continue;
+        }
+
+        // This decoder expects a short carrier pulse for each bit.
+        if (pulseUnits < 0.55 || pulseUnits > 1.5) {
+          malformedPairs++;
+          saveRun("pulse outside expected range");
+          continue;
+        }
+
+        // Nexus-style PPM: short gap = 0, long gap = 1.
+        if (gapUnits >= 1.4 && gapUnits <= 2.7) {
+          bits.push("0");
+        } else if (gapUnits >= 3.1 && gapUnits <= 5.2) {
+          bits.push("1");
+        } else {
+          malformedPairs++;
+          saveRun("gap outside expected ranges");
+          continue;
+        }
+
+        // Keep the buffer bounded if timing noise creates a long run.
+        if (bits.length > 36) {
+          rejectedFrames.push({
+            bitString: bits.join(""),
+            reason: "more than 36 bits before a frame boundary"
+          });
+          bits = bits.slice(-36);
+        }
+      }
+
+      saveRun("end of capture");
+
+      // Group identical accepted frames and count how often each occurred.
+      const grouped = new Map();
+
+      for (const entry of completeFrames) {
+        const key = entry.frame.toString();
+        const existing = grouped.get(key);
+
+        if (existing) {
+          existing.count++;
+        } else {
+          grouped.set(key, { ...entry, count: 1 });
+        }
+      }
+
+      const uniqueFrames = [...grouped.values()];
+
+      const lines = [
+        `Estimated TE: ${te} µs`,
+        `Complete 36-bit frames with fixed nibble F: ${completeFrames.length}`,
+        `Unique accepted frames: ${uniqueFrames.length}`,
+        `Rejected/incomplete runs: ${rejectedFrames.length}`,
+        `Malformed pulse/gap pairs: ${malformedPairs}`,
+        `Long-gap boundaries: ${frameBoundaries}`,
+        "",
+        "Note: the fixed nibble is only a format check; this decoder does not verify a checksum.",
+        ""
+      ];
+
+      if (uniqueFrames.length === 0) {
+        lines.push("No accepted 36-bit frames found.");
+
+        if (rejectedFrames.length) {
+          lines.push("", "Rejected/incomplete runs (first 10):");
+          for (const [index, item] of rejectedFrames.slice(0, 10).entries()) {
+            lines.push(
+              `${index + 1}. ${item.bitString || "(no bits)"} — ${item.reason}`
+            );
+          }
+        }
+
+        return lines.join("\n");
+      }
+
+      for (const [index, entry] of uniqueFrames.entries()) {
+        const frame = entry.frame;
+        const bitString = entry.bitString;
+
+        const sensorId = Number((frame >> 28n) & 0xFFn);
+        const flags = Number((frame >> 24n) & 0xFn);
+        const tempRaw = Number((frame >> 12n) & 0xFFFn);
+        const fixedNibble = Number((frame >> 8n) & 0xFn);
+        const humidityRaw = Number(frame & 0xFFn);
+
+        // Signed 12-bit two's-complement temperature, in tenths of °C.
+        const signedTemp = (tempRaw & 0x800)
+          ? tempRaw - 0x1000
+          : tempRaw;
+
+        const channel = (flags & 0x3) + 1;
+        const battery = (flags & 0x8) ? "OK" : "low";
+
+        // In this format, 0 is treated as no humidity data rather than
+        // a measured 0% humidity value.
+        const humidityText = humidityRaw === 0
+          ? "No humidity data (raw 0x00)"
+          : `${humidityRaw}%`;
+
+        // Group the exact 36 bits into the fields used by this decoder.
+        const groupedBits =
+          bitString.slice(0, 8) + " " +
+          bitString.slice(8, 12) + " " +
+          bitString.slice(12, 24) + " " +
+          bitString.slice(24, 28) + " " +
+          bitString.slice(28, 36);
+
+        lines.push(
+          `${index + 1}. Frame: 0x${frame.toString(16).padStart(9, "0")} | Repeats: ${entry.count}`,
+          `   ID: 0x${sensorId.toString(16).padStart(2, "0")} | Channel: ${channel} | Battery: ${battery}`,
+          `   Temperature: ${(signedTemp / 10).toFixed(1)} °C | Humidity: ${humidityText}`,
+          `   Raw fields (ID / flags / temp / fixed / humidity): ${groupedBits}`,
+          `   Raw humidity byte: 0x${humidityRaw.toString(16).padStart(2, "0")}`,
+          `   Fixed nibble: 0x${fixedNibble.toString(16)}`,
+          ""
+        );
+      }
+
+      if (rejectedFrames.length) {
+        lines.push("Rejected/incomplete runs (first 10):");
+
+        for (const [index, item] of rejectedFrames.slice(0, 10).entries()) {
+          lines.push(
+            `${index + 1}. ${item.bitString || "(no bits)"} — ${item.reason}`
+          );
+        }
+      }
+
+      return lines.join("\n");
+    }
+  </script>
+</body>
+</html>
