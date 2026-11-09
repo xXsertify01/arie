@@ -111,6 +111,8 @@ typedef struct {
     bool receiving;
     bool radio_ready;
     bool lab_test_active;
+    bool file_tx_active;
+    bool file_tx_repeat_held;
     bool lab_test_resume_receiver;
     SubGhzTransmitter* lab_test_transmitter;
     uint32_t lab_test_started_tick;
@@ -975,6 +977,89 @@ static void stop_lab_test_transmission(ScoutApp* app) {
     set_status(app, "Test transmission stopped");
 }
 
+static bool start_saved_file_transmission(ScoutApp* app, const char* filename) {
+    if(!filename || !has_sub_extension(filename)) {
+        set_status(app, "Invalid Sub-GHz file");
+        return false;
+    }
+
+    // Load the file details if they are not already for this selection.
+    if(strcmp(app->selected_file, filename) != 0) {
+        if(!handle_selected_file(app, filename)) return false;
+    }
+
+    if(!app->file_protocol[0] || !app->file_preset[0] ||
+       app->file_frequency == 0U) {
+        set_status(app, "Missing signal details");
+        return false;
+    }
+
+    int preset_index =
+        subghz_setting_get_inx_preset_by_name(app->radio_setting, app->file_preset);
+    if(preset_index < 0 || (size_t)preset_index >= scout_preset_count(app)) {
+        set_status(app, "File preset unavailable");
+        return false;
+    }
+
+    if(!furi_hal_region_is_frequency_allowed(app->file_frequency) ||
+       !subghz_devices_is_frequency_valid(app->device, app->file_frequency)) {
+        set_status(app, "File frequency unavailable");
+        return false;
+    }
+
+    char path[sizeof("/ext/subghz/") + MAX_SUBGHZ_FILENAME];
+    int path_length = snprintf(
+        path, sizeof(path), "%s%s", EXT_PATH("subghz/"), filename);
+    if(path_length < 0 || (size_t)path_length >= sizeof(path)) {
+        set_status(app, "File path too long");
+        return false;
+    }
+
+    FlipperFormat* format = flipper_format_file_alloc(app->storage);
+    if(!format || !flipper_format_file_open_existing(format, path)) {
+        if(format) flipper_format_free(format);
+        set_status(app, "Could not open file");
+        return false;
+    }
+
+    SubGhzTransmitter* transmitter =
+        subghz_transmitter_alloc_init(app->protocol_environment, app->file_protocol);
+    if(!transmitter ||
+       subghz_transmitter_deserialize(transmitter, format) !=
+           SubGhzProtocolStatusOk) {
+        if(transmitter) subghz_transmitter_free(transmitter);
+        flipper_format_free(format);
+        set_status(app, "Could not load signal");
+        return false;
+    }
+    flipper_format_free(format);
+
+    bool resume_receiver = app->receiving;
+    stop_receiver(app);
+    subghz_devices_reset(app->device);
+    subghz_devices_idle(app->device);
+    subghz_devices_load_preset(
+        app->device, FuriHalSubGhzPresetCustom,
+        scout_preset_data(app, (size_t)preset_index));
+    subghz_devices_set_frequency(app->device, app->file_frequency);
+
+    if(!subghz_devices_set_tx(app->device) ||
+       !subghz_devices_start_async_tx(
+           app->device, subghz_transmitter_yield, transmitter)) {
+        subghz_devices_idle(app->device);
+        subghz_transmitter_free(transmitter);
+        if(resume_receiver) start_receiver(app);
+        set_status(app, "Transmission failed");
+        return false;
+    }
+
+    app->lab_test_transmitter = transmitter;
+    app->lab_test_active = true;
+    app->lab_test_resume_receiver = resume_receiver;
+    set_status(app, "Selected file transmitting");
+    return true;
+}
+
 static bool transmission_handling_logic(ScoutApp* app, const char* selected_file) {
     if(!selected_file || !has_sub_extension(selected_file)) {
         set_status(app, "Invalid Sub-GHz file");
@@ -990,11 +1075,8 @@ static bool transmission_handling_logic(ScoutApp* app, const char* selected_file
 }
 
 void handle_transmission(ScoutApp* app, const char* selected_file) {
-    if (!transmission_handling_logic(app, selected_file)) {
-        return;
-    }
-
-    set_status(app, "RF transmit not implemented");
+    if(!transmission_handling_logic(app, selected_file)) return;
+    start_saved_file_transmission(app, selected_file);
 }
 
 void on_file_picked(ScoutApp* app, const char* selected_file, bool picked) {
@@ -2420,7 +2502,20 @@ int32_t subghz_scout_app(void* p) {
                 set_status(&app, "Rename file");
             } else if(app.view == ScoutViewFileDetails &&
                       event.key == InputKeyOk && event.type == InputTypeShort) {
-                app.view = ScoutViewDeleteConfirmation;
+                app.file_tx_repeat_held = false;
+                if(!app.file_tx_active) {
+                    start_saved_file_transmission(&app, app.selected_file);
+                }
+            } else if(app.view == ScoutViewFileDetails &&
+                      event.key == InputKeyOk && event.type == InputTypeLong) {
+                app.file_tx_repeat_held = true;
+                if(!app.file_tx_active) {
+                    start_saved_file_transmission(&app, app.selected_file);
+                }
+            } else if(app.view == ScoutViewFileDetails &&
+          event.key == InputKeyOk && event.type == InputTypeRelease) {
+                app.file_tx_repeat_held = false;
+
             } else if(app.view == ScoutViewDeleteConfirmation &&
                       event.key == InputKeyLeft && event.type == InputTypeShort) {
                 app.view = ScoutViewFileDetails;
