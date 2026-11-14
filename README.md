@@ -9,3 +9,5 @@ I'm sorry nothing I do is complete.
 
 the parmaster.fap is a app for the flipper. I think this might only work on momentum firmware idk haven't tried any other same with the text_editor_app.fap that's for flipper zero momentum firmware.
 video_music_player.html is a simple video watcher but not refined for other people stuff yet i only have somthing that helps with all of black clover and death note.
+
+the c script is a text editor that I was working on and made a little better but still I think it could have been better I see a lot of opportunities with this app in the fap i added xbm editing so you can make xbm images that can be used for flipper bitmaps.
