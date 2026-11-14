@@ -1,0 +1,909 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My Media Library</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;padding:16px;background:#111;color:#eee;font:16px Arial,sans-serif}
+main{max-width:900px;margin:auto}
+h1{text-align:center;color:#7cff7c}
+.panel{background:#1d1d1d;padding:16px;border-radius:15px}
+.screen{display:none}
+.screen.active{display:block}
+.row{display:flex;flex-wrap:wrap;gap:9px;align-items:center;margin:12px 0}
+button,.fileButton,select{min-height:46px;padding:12px;border:0;border-radius:8px;font-size:16px}
+button,.fileButton{display:inline-flex;justify-content:center;align-items:center;background:#2faa46;color:white;cursor:pointer;text-align:center}
+button:hover,.fileButton:hover{background:#39c854}
+.secondary{background:#333}
+select{background:#292929;color:white;max-width:100%}
+input[type=file]{display:none}
+.homeChoice{display:block;width:100%;padding:22px;margin:16px 0;font-size:20px}
+video{display:block;width:100%;max-height:65vh;background:#000;border-radius:10px}
+audio{display:block;width:100%;min-height:46px;margin:12px 0}
+.info{background:#252525;padding:12px;border-radius:9px;margin:12px 0;overflow-wrap:anywhere}
+.status{color:#ccc;margin:12px 0;overflow-wrap:anywhere}
+ul{list-style:none;padding:0;max-height:300px;overflow:auto}
+li{padding:12px;border-bottom:1px solid #333;cursor:pointer;overflow-wrap:anywhere}
+li:hover{background:#303030}
+li.active{color:#7cff7c}
+small{color:#aaa}
+@media(max-width:600px){
+  body{padding:8px}
+  .panel{padding:12px}
+  h1{font-size:1.6rem}
+  h2{font-size:1.25rem}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .row button,.row .fileButton,.row select{width:100%;min-width:0;font-size:14px;padding:10px 6px}
+  video{max-height:55vh}
+  li{padding:14px 10px}
+}
+</style>
+</head>
+<body>
+<main>
+<h1>My Media Library</h1>
+
+<section id="homeScreen" class="screen active panel">
+  <h2>Choose a library</h2>
+  <button class="homeChoice" onclick="showScreen('videoScreen')">🎬 Movies &amp; Videos</button>
+  <button class="homeChoice" onclick="showScreen('musicScreen')">🎵 Music</button>
+</section>
+
+<section id="videoScreen" class="screen panel">
+  <div class="row">
+    <button class="secondary" onclick="showScreen('homeScreen')">⌂ Home</button>
+    <label class="fileButton">📁 Load Movies Folder<input id="videoFolder" type="file" webkitdirectory multiple></label>
+    <label class="fileButton">🎞 Select Video Files<input id="videoFilesInput" type="file" accept="video/*" multiple></label>
+    <button onclick="showScreen('recentScreen')">Recently Watched</button>
+  </div>
+  <div class="row">
+    <label for="videoGroup">Show / folder:</label><select id="videoGroup" disabled></select>
+    <label for="videoSeason">Season / group:</label><select id="videoSeason" disabled></select>
+  </div>
+  <div class="row">
+    <button id="videoResume" class="secondary">⏯ Resume</button>
+    <button id="videoPrev" class="secondary">⏮ Previous</button>
+    <button id="videoNext" class="secondary">⏭ Next</button>
+    <button id="videoFull" class="secondary">⛶ Fullscreen</button>
+    <label for="videoSpeed">Speed:</label>
+    <select id="videoSpeed">
+      <option value=".5">0.5×</option><option value=".75">0.75×</option>
+      <option value="1" selected>1×</option><option value="1.25">1.25×</option>
+      <option value="1.5">1.5×</option><option value="1.75">1.75×</option>
+      <option value="2">2×</option>
+    </select>
+  </div>
+  <div id="videoNow" class="info">No video selected.</div>
+  <video id="videoPlayer" controls playsinline></video>
+  <div id="videoStatus" class="status">Choose your Movies folder to load videos.</div>
+  <ul id="videoList"></ul>
+</section>
+
+<section id="musicScreen" class="screen panel">
+  <div class="row">
+    <button class="secondary" onclick="showScreen('homeScreen')">⌂ Home</button>
+    <label class="fileButton">📁 Load Music Folder<input id="musicFolder" type="file" webkitdirectory multiple></label>
+    <label class="fileButton">🎧 Select Music Files<input id="musicFilesInput" type="file" accept="audio/*" multiple></label>
+  </div>
+  <div class="row">
+    <label for="artistSelect">Folder:</label><select id="artistSelect" disabled></select>
+    <button id="playAllOnce">▶ Play All Once</button>
+  </div>
+  <div class="row">
+    <button id="musicPrev" class="secondary">⏮ Previous</button>
+    <button id="musicPlayPause" class="secondary">▶ Play / Pause</button>
+    <button id="musicNext" class="secondary">⏭ Next</button>
+  </div>
+  <div id="musicNow" class="info">No song selected.</div>
+  <div id="musicUpNext" class="info">Up next: —</div>
+  <audio id="musicPlayer" controls></audio>
+  <div id="musicStatus" class="status">Choose your Music folder to load songs.</div>
+  <ul id="musicList"></ul>
+  <small>Music is grouped by the folder containing each file.</small>
+</section>
+
+<section id="recentScreen" class="screen panel">
+  <div class="row"><button class="secondary" onclick="showScreen('videoScreen')">← Back to Videos</button></div>
+  <h2>Recently Watched</h2>
+  <div id="recent" class="info"></div>
+  <p class="status">To resume, return to Videos, load the folder, then press Resume.</p>
+</section>
+</main>
+
+<script>
+"use strict";
+
+const $ = id => document.getElementById(id);
+const videoPlayer = $("videoPlayer");
+const musicPlayer = $("musicPlayer");
+
+let videoGroups = new Map(), videoFiles = [], videoIndex = -1, videoUrl = "";
+let musicGroups = new Map(), musicFiles = [], musicQueue = [], musicIndex = -1;
+let musicUrl = "", currentMusicFile = null;
+
+/* ---------- Reduced diagnostics ---------- */
+
+const debugEvents = [];
+let fileSummary = { count: 0, totalBytes: 0, types: {} };
+
+function debugLog(type, details) {
+  debugEvents.push(`${new Date().toISOString()} | ${type} | ${String(details)}`);
+  if (debugEvents.length > 100) debugEvents.shift();
+}
+
+window.addEventListener("error", event => {
+  debugLog("JavaScript error",
+    `${event.message} — ${event.filename}:${event.lineno}:${event.colno}`);
+});
+
+window.addEventListener("unhandledrejection", event => {
+  debugLog("Unhandled promise",
+    event.reason?.stack || event.reason?.message || String(event.reason));
+});
+
+const originalConsoleError = console.error.bind(console);
+console.error = (...args) => {
+  debugLog("Console error", args.map(String).join(" ").slice(0, 500));
+  originalConsoleError(...args);
+};
+
+// Record a summary only; do not retain every selected file or its path.
+window.addEventListener("change", event => {
+  const element = event.target;
+
+  if (element.matches('input[type="file"]')) {
+    const files = [...(element.files || [])];
+    const types = {};
+
+    for (const file of files) {
+      const type = file.type || "unknown";
+      types[type] = (types[type] || 0) + 1;
+    }
+
+    fileSummary = {
+      count: files.length,
+      totalBytes: files.reduce((sum, file) => sum + file.size, 0),
+      types
+    };
+
+    debugLog("Files selected",
+      `${files.length} file(s) from ${element.id || "file input"}`);
+  } else if (element.matches("select")) {
+    debugLog("Selection changed",
+      `${element.id || "select"} = ${element.value}`);
+  }
+}, true);
+
+// Keep playback/error events, but omit routine loading events.
+const debugMediaEvents = [
+  "play", "playing", "pause", "ended",
+  "waiting", "stalled", "error", "emptied"
+];
+
+document.querySelectorAll("video, audio").forEach(player => {
+  for (const eventName of debugMediaEvents) {
+    player.addEventListener(eventName, () => {
+      const error = player.error;
+      debugLog(`${player.tagName} ${eventName}`,
+        `source=${player.currentSrc || player.src || "none"}; ` +
+        `time=${Number.isFinite(player.currentTime) ? player.currentTime.toFixed(2) : "unknown"}; ` +
+        `paused=${player.paused}; readyState=${player.readyState}; ` +
+        `networkState=${player.networkState}; ` +
+        `error=${error ? `${error.code}: ${error.message}` : "none"}`);
+    });
+  }
+});
+
+// Track object URL lifecycle without logging file paths or sizes.
+const originalCreateObjectURL = URL.createObjectURL.bind(URL);
+URL.createObjectURL = object => {
+  const url = originalCreateObjectURL(object);
+  debugLog("Media URL created",
+    `type=${object?.type || "unknown"}; size=${object?.size ?? "unknown"} bytes`);
+  return url;
+};
+
+const originalRevokeObjectURL = URL.revokeObjectURL.bind(URL);
+URL.revokeObjectURL = url => {
+  debugLog("Media URL revoked");
+  return originalRevokeObjectURL(url);
+};
+
+// Track rejected play requests.
+const originalMediaPlay = HTMLMediaElement.prototype.play;
+HTMLMediaElement.prototype.play = function(...args) {
+  const result = originalMediaPlay.apply(this, args);
+  if (result && typeof result.catch === "function") {
+    result.catch(error => {
+      debugLog(`${this.tagName} play rejected`, error.message);
+    });
+  }
+  return result;
+};
+
+// Throttle progress diagnostics; do not log stored paths or exact values.
+const originalStorageSetItem = Storage.prototype.setItem;
+let lastProgressLogAt = 0;
+
+Storage.prototype.setItem = function(key, value) {
+  const progressKeys = ["recent_video", "lib_time", "videoPath", "videoTime"];
+
+  if (progressKeys.includes(key)) {
+    const now = Date.now();
+    if (now - lastProgressLogAt >= 30000) {
+      debugLog("Video progress saved", "Progress updates are being saved.");
+      lastProgressLogAt = now;
+    }
+  }
+
+  return originalStorageSetItem.call(this, key, value);
+};
+
+const debugRequiredIds = [
+  "videoPlayer", "musicPlayer", "videoFolder", "videoFilesInput",
+  "musicFolder", "musicFilesInput", "videoGroup", "videoSeason",
+  "artistSelect", "videoStatus", "musicStatus"
+];
+
+function makeDebugReport() {
+  const media = [...document.querySelectorAll("video, audio")].map(player => ({
+    player: player.tagName,
+    source: player.currentSrc ? "loaded" : "none",
+    paused: player.paused,
+    currentTime: Number.isFinite(player.currentTime)
+      ? Number(player.currentTime.toFixed(2)) : "unknown",
+    duration: Number.isFinite(player.duration)
+      ? Number(player.duration.toFixed(2)) : "unknown",
+    readyState: player.readyState,
+    networkState: player.networkState,
+    error: player.error
+      ? { code: player.error.code, message: player.error.message }
+      : null
+  }));
+
+  let savedProgress;
+  try {
+    savedProgress = {
+      hasRecentVideo: Boolean(localStorage.getItem("recent_video")),
+      hasVideoPath: Boolean(localStorage.getItem("videoPath")),
+      hasSavedTime: Boolean(localStorage.getItem("lib_time") ||
+        localStorage.getItem("videoTime"))
+    };
+  } catch (error) {
+    savedProgress = "Could not read local storage: " + error.message;
+  }
+
+  return JSON.stringify({
+    collectedAt: new Date().toISOString(),
+    browser: navigator.userAgent,
+    online: navigator.onLine,
+    missingAppElements: debugRequiredIds.filter(
+      id => !document.getElementById(id)
+    ),
+    appStatus: {
+      video: $("videoStatus")?.textContent,
+      music: $("musicStatus")?.textContent
+    },
+    selections: {
+      videoGroup: $("videoGroup")?.value,
+      videoSeason: $("videoSeason")?.value,
+      musicFolder: $("artistSelect")?.value
+    },
+    fileSummary,
+    libraryCounts: {
+      videos: videoFiles.length,
+      musicFiles: musicFiles.length,
+      queuedSongs: musicQueue.length
+    },
+    currentFiles: {
+      video: videoFiles[videoIndex]?.name || "none",
+      song: currentMusicFile?.name || "none"
+    },
+    media,
+    savedProgress,
+    recentEvents: debugEvents
+  }, null, 2);
+}
+
+// In-page diagnostics overlay.
+const debugStyle = document.createElement("style");
+debugStyle.textContent = `
+  #fullDebugOverlay {
+    display:none; position:fixed; inset:0; z-index:999999;
+    background:#000c; align-items:center; justify-content:center; padding:12px;
+  }
+  #fullDebugPanel {
+    background:#1d1d1d; color:#eee; width:min(900px,98vw);
+    max-height:95vh; padding:16px; border-radius:12px;
+    display:flex; flex-direction:column; gap:10px;
+  }
+  #fullDebugText {
+    width:100%; height:55vh; background:#111; color:#eee;
+    font:12px monospace; white-space:pre; overflow:auto;
+  }
+  #fullDebugPanel button { padding:10px; }
+`;
+document.head.append(debugStyle);
+
+const debugOverlay = document.createElement("div");
+debugOverlay.id = "fullDebugOverlay";
+debugOverlay.innerHTML = `
+  <div id="fullDebugPanel">
+    <strong>Diagnostics</strong>
+    <textarea id="fullDebugText" readonly></textarea>
+    <div>
+      <button id="fullDebugCopy" type="button">Copy report</button>
+      <button id="fullDebugRefresh" type="button">Refresh report</button>
+      <button id="fullDebugClose" type="button">Close</button>
+    </div>
+  </div>
+`;
+document.body.append(debugOverlay);
+
+const debugReportBox = $("fullDebugText");
+
+function openDebugReport() {
+  debugReportBox.value = makeDebugReport();
+  debugOverlay.style.display = "flex";
+}
+
+const debugButton = document.createElement("button");
+debugButton.type = "button";
+debugButton.textContent = "Diagnostics";
+debugButton.style.cssText =
+  "position:fixed;right:12px;bottom:64px;z-index:999998;padding:12px;background:#b3261e;color:white;border:0;border-radius:8px";
+debugButton.addEventListener("click", openDebugReport);
+document.body.append(debugButton);
+
+$("fullDebugClose").addEventListener("click", () => {
+  debugOverlay.style.display = "none";
+});
+
+$("fullDebugRefresh").addEventListener("click", () => {
+  debugReportBox.value = makeDebugReport();
+});
+
+$("fullDebugCopy").addEventListener("click", async event => {
+  const button = event.currentTarget;
+  try {
+    await navigator.clipboard.writeText(debugReportBox.value);
+    button.textContent = "Copied!";
+  } catch {
+    debugReportBox.focus();
+    debugReportBox.select();
+    button.textContent = "Selected — copy it";
+  }
+});
+
+debugLog("Diagnostics", "Reduced diagnostics started.");
+
+/* ---------- App functions ---------- */
+
+function showScreen(id) {
+  document.querySelectorAll(".screen").forEach(screen =>
+    screen.classList.toggle("active", screen.id === id)
+  );
+  if (id === "recentScreen") renderRecentlyWatched();
+}
+
+function renderRecentlyWatched() {
+  const recent = $("recent");
+  recent.replaceChildren();
+
+  const path = localStorage.getItem("recent_video") ||
+    localStorage.getItem("videoPath");
+  const time = Number(localStorage.getItem("lib_time") ||
+    localStorage.getItem("videoTime")) || 0;
+
+  if (!path) {
+    const message = document.createElement("h3");
+    message.textContent = "No videos watched yet.";
+    recent.append(message);
+    return;
+  }
+
+  const heading = document.createElement("h3");
+  heading.textContent = "Last Video";
+  const fileLabel = document.createElement("b");
+  fileLabel.textContent = "File:";
+  const timeLabel = document.createElement("b");
+  timeLabel.textContent = "Resume Time:";
+  const timeText = Math.floor(time / 60) + ":" +
+    String(Math.floor(time % 60)).padStart(2, "0");
+
+  recent.append(heading, fileLabel, document.createElement("br"));
+  recent.append(document.createTextNode(path));
+  recent.append(document.createElement("br"), document.createElement("br"));
+  recent.append(timeLabel, document.createElement("br"));
+  recent.append(document.createTextNode(timeText));
+}
+
+function pathOf(file) {
+  return file.webkitRelativePath || file.name;
+}
+
+function sortFiles(a, b) {
+  return pathOf(a).localeCompare(pathOf(b), undefined, {
+    numeric: true,
+    sensitivity: "base"
+  });
+}
+
+function isVideo(file) {
+  return file.type.startsWith("video/") ||
+    /\.(mp4|m4v|mkv|avi|mov|webm|mpg|mpeg|3gp|ogv|wmv|flv|ts|mts)$/i.test(file.name);
+}
+
+function isMusic(file) {
+  return file.type.startsWith("audio/") ||
+    /\.(mp3|m4a|aac|wav|flac|ogg|oga|opus|wma)$/i.test(file.name);
+}
+
+function classifyVideo(file) {
+  const path = pathOf(file).replaceAll("\\", "/");
+  const parts = path.split("/");
+  const text = path.toLowerCase().replace(/[_-]/g, " ");
+
+  let group;
+  if (/black\s*clover|\bblk\b|\bblackclover\b/.test(text)) {
+    group = "Black Clover";
+  } else if (/death\s*note|\bdeathnote\b|\bdn\b/.test(text)) {
+    group = "Death Note";
+  } else {
+    group = parts.length > 1 ? parts[1] : "Other videos";
+  }
+
+  let season = "All episodes";
+  const seasonMatch = text.match(/\bseason[\s._-]*(\d+)\b|\bs(\d{1,2})\b/i);
+  const letterMatch = text.match(/\b([ab])(\d{1,2})\b/i);
+
+  if (seasonMatch) season = "Season " + (seasonMatch[1] || seasonMatch[2]);
+  else if (letterMatch) season = letterMatch[1].toUpperCase() + letterMatch[2];
+  else if (parts.length > 3) season = parts[2];
+
+  return { group, season };
+}
+
+function folderFor(file) {
+  const parts = pathOf(file).replaceAll("\\", "/").split("/").filter(Boolean);
+  return parts.length > 1 ? parts[parts.length - 2] : "Selected files";
+}
+
+function loadVideos(fileList) {
+  videoGroups = new Map();
+
+  [...fileList].filter(isVideo).forEach(file => {
+    const { group, season } = classifyVideo(file);
+    if (!videoGroups.has(group)) videoGroups.set(group, new Map());
+    const seasons = videoGroups.get(group);
+    if (!seasons.has(season)) seasons.set(season, []);
+    seasons.get(season).push(file);
+  });
+
+  for (const seasons of videoGroups.values()) {
+    for (const files of seasons.values()) files.sort(sortFiles);
+  }
+
+  const select = $("videoGroup");
+  select.replaceChildren();
+
+  [...videoGroups.keys()]
+    .sort((a, b) => a.localeCompare(b, undefined, {
+      numeric: true, sensitivity: "base"
+    }))
+    .forEach(group => select.add(new Option(group, group)));
+
+  select.disabled = !videoGroups.size;
+
+  if (videoGroups.size) {
+    select.value = select.options[0].value;
+    showVideoGroup(select.value);
+  } else {
+    $("videoSeason").replaceChildren();
+    $("videoSeason").disabled = true;
+    videoFiles = [];
+    videoIndex = -1;
+    $("videoList").replaceChildren();
+  }
+
+  const count = [...videoGroups.values()].reduce(
+    (sum, seasons) => sum +
+      [...seasons.values()].reduce((n, files) => n + files.length, 0),
+    0
+  );
+  $("videoStatus").textContent = count
+    ? `${count} videos loaded.`
+    : "No video files found.";
+}
+
+function showVideoGroup(group, wantedSeason) {
+  const seasons = videoGroups.get(group);
+  if (!seasons) return;
+
+  const select = $("videoSeason");
+  select.replaceChildren();
+  const names = [...seasons.keys()].sort((a, b) =>
+    a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" })
+  );
+  names.forEach(name => select.add(new Option(name, name)));
+
+  select.disabled = false;
+  select.value = seasons.has(wantedSeason) ? wantedSeason : names[0];
+  videoFiles = seasons.get(select.value) || [];
+  videoIndex = -1;
+  renderVideoList();
+}
+
+function renderVideoList() {
+  const list = $("videoList");
+  list.replaceChildren();
+
+  videoFiles.forEach((file, index) => {
+    const li = document.createElement("li");
+    li.textContent = (index + 1) + ". " + file.name;
+    if (index === videoIndex) li.className = "active";
+    li.onclick = () => playVideo(index, false);
+    list.append(li);
+  });
+}
+
+function playVideo(index, resume) {
+  if (index < 0 || index >= videoFiles.length) return;
+
+  const file = videoFiles[index];
+  const oldUrl = videoUrl;
+  videoIndex = index;
+  videoUrl = URL.createObjectURL(file);
+  videoPlayer.src = videoUrl;
+  videoPlayer.load();
+
+  $("videoNow").textContent = "Now playing: " + file.name;
+  $("videoStatus").textContent = "Playing: " + file.name;
+  renderVideoList();
+
+  const savedPath = localStorage.getItem("recent_video") ||
+    localStorage.getItem("videoPath");
+  const savedTime = Number(localStorage.getItem("lib_time") ||
+    localStorage.getItem("videoTime")) || 0;
+
+  if (resume && pathOf(file) === savedPath && savedTime > 0) {
+    videoPlayer.addEventListener("loadedmetadata", function seekToSavedTime() {
+      videoPlayer.removeEventListener("loadedmetadata", seekToSavedTime);
+      videoPlayer.currentTime = Number.isFinite(videoPlayer.duration)
+        ? Math.min(savedTime, videoPlayer.duration)
+        : savedTime;
+      videoPlayer.play().catch(() => {});
+    });
+  } else {
+    videoPlayer.play().catch(() => {});
+  }
+
+  if (oldUrl) URL.revokeObjectURL(oldUrl);
+}
+
+function moveVideo(direction) {
+  const seasons = videoGroups.get($("videoGroup").value);
+  if (!seasons || !videoFiles.length) return;
+
+  const names = [...seasons.keys()].sort((a, b) =>
+    a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" })
+  );
+  const seasonIndex = names.indexOf($("videoSeason").value);
+  const episodeIndex = videoIndex + direction;
+
+  if (episodeIndex >= 0 && episodeIndex < videoFiles.length) {
+    playVideo(episodeIndex, false);
+    return;
+  }
+
+  const nextSeasonIndex = seasonIndex + direction;
+  if (nextSeasonIndex < 0 || nextSeasonIndex >= names.length) return;
+
+  showVideoGroup($("videoGroup").value, names[nextSeasonIndex]);
+  if (videoFiles.length) {
+    playVideo(direction > 0 ? 0 : videoFiles.length - 1, false);
+  }
+}
+
+function updateMediaSession() {
+  if (!("mediaSession" in navigator) || !currentMusicFile) return;
+
+  if ("MediaMetadata" in window) {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: currentMusicFile.name,
+      artist: "My Media Library"
+    });
+  }
+
+  const actions = {
+    play: () => musicPlayer.play().catch(() => {}),
+    pause: () => musicPlayer.pause(),
+    nexttrack: nextSong,
+    previoustrack: previousSong
+  };
+
+  for (const [action, handler] of Object.entries(actions)) {
+    try {
+      navigator.mediaSession.setActionHandler(action, handler);
+    } catch {
+      // This browser or device may not support the action.
+    }
+  }
+}
+
+function playQueueIndex(index) {
+  if (index < 0 || index >= musicQueue.length) return;
+
+  const oldUrl = musicUrl;
+  musicIndex = index;
+  currentMusicFile = musicQueue[index];
+
+  musicPlayer.pause();
+  musicUrl = URL.createObjectURL(currentMusicFile);
+  musicPlayer.src = musicUrl;
+  musicPlayer.load();
+
+  $("musicNow").textContent = "Now playing: " + currentMusicFile.name;
+  $("musicStatus").textContent =
+    `Playing song ${musicIndex + 1} of ${musicQueue.length}.`;
+  updateUpNext();
+  setMusicList();
+  updateMediaSession();
+
+  musicPlayer.play().catch(() => {
+    $("musicStatus").textContent =
+      "Could not play this file in the browser: " + currentMusicFile.name;
+  });
+
+  if (oldUrl) setTimeout(() => URL.revokeObjectURL(oldUrl), 1000);
+}
+
+function loadMusic(fileList) {
+  musicGroups = new Map();
+
+  [...fileList].filter(isMusic).forEach(file => {
+    const folder = folderFor(file);
+    if (!musicGroups.has(folder)) musicGroups.set(folder, []);
+    musicGroups.get(folder).push(file);
+  });
+
+  for (const files of musicGroups.values()) files.sort(sortFiles);
+
+  const select = $("artistSelect");
+  select.replaceChildren();
+  select.add(new Option("All folders", "__ALL__"));
+
+  [...musicGroups.keys()]
+    .sort((a, b) => a.localeCompare(b, undefined, {
+      numeric: true, sensitivity: "base"
+    }))
+    .forEach(folder => select.add(new Option(folder, folder)));
+
+  select.disabled = !musicGroups.size;
+  select.value = "__ALL__";
+  setMusicList();
+
+  const count = [...musicGroups.values()].reduce(
+    (n, files) => n + files.length, 0
+  );
+  $("musicStatus").textContent = count
+    ? `${count} songs loaded.`
+    : "No music files found.";
+}
+
+function setMusicList() {
+  const folder = $("artistSelect").value;
+  musicFiles = folder === "__ALL__"
+    ? [...musicGroups.values()].flat().sort(sortFiles)
+    : [...(musicGroups.get(folder) || [])].sort(sortFiles);
+
+  const list = $("musicList");
+  list.replaceChildren();
+
+  musicFiles.forEach((file, index) => {
+    const li = document.createElement("li");
+    li.textContent = (index + 1) + ". " + file.name;
+    if (file === currentMusicFile) li.className = "active";
+    li.onclick = () => playSelectedSong(index);
+    list.append(li);
+  });
+}
+
+function updateUpNext() {
+  const nextIndex = musicIndex + 1;
+  $("musicUpNext").textContent = nextIndex < musicQueue.length
+    ? "Up next: " + musicQueue[nextIndex].name
+    : "Up next: —";
+}
+
+function playSelectedSong(index) {
+  if (index < 0 || index >= musicFiles.length) return;
+  musicQueue = [...musicFiles].sort(sortFiles);
+  playQueueIndex(index);
+}
+
+function playAllOnce() {
+  musicQueue = [...musicFiles].sort(sortFiles);
+  if (!musicQueue.length) {
+    $("musicStatus").textContent = "Load music files first.";
+    return;
+  }
+  playQueueIndex(0);
+}
+
+function nextSong() {
+  if (musicIndex + 1 < musicQueue.length) {
+    playQueueIndex(musicIndex + 1);
+  } else {
+    musicPlayer.pause();
+    $("musicStatus").textContent =
+      "Finished. Every song in this list played once.";
+    $("musicUpNext").textContent = "Up next: —";
+  }
+}
+
+function previousSong() {
+  if (musicIndex > 0) {
+    playQueueIndex(musicIndex - 1);
+  } else if (currentMusicFile) {
+    musicPlayer.currentTime = 0;
+    musicPlayer.play().catch(() => {});
+  }
+}
+
+/* ---------- App controls ---------- */
+
+$("videoFolder").addEventListener("change", event => {
+  loadVideos(event.target.files);
+  event.target.value = "";
+});
+
+$("videoFilesInput").addEventListener("change", event => {
+  loadVideos(event.target.files);
+  event.target.value = "";
+});
+
+$("musicFolder").addEventListener("change", event => {
+  loadMusic(event.target.files);
+  event.target.value = "";
+});
+
+$("musicFilesInput").addEventListener("change", event => {
+  loadMusic(event.target.files);
+  event.target.value = "";
+});
+
+$("videoGroup").addEventListener("change", () =>
+  showVideoGroup($("videoGroup").value)
+);
+
+$("videoSeason").addEventListener("change", () => {
+  videoFiles = videoGroups.get($("videoGroup").value)
+    ?.get($("videoSeason").value) || [];
+  videoIndex = -1;
+  renderVideoList();
+});
+
+$("videoPrev").addEventListener("click", () => moveVideo(-1));
+$("videoNext").addEventListener("click", () => moveVideo(1));
+
+$("videoResume").addEventListener("click", () => {
+  const savedPath = localStorage.getItem("recent_video") ||
+    localStorage.getItem("videoPath");
+
+  for (const [group, seasons] of videoGroups) {
+    for (const [season, files] of seasons) {
+      const index = files.findIndex(file => pathOf(file) === savedPath);
+      if (index >= 0) {
+        $("videoGroup").value = group;
+        showVideoGroup(group, season);
+        showScreen("videoScreen");
+        playVideo(index, true);
+        return;
+      }
+    }
+  }
+
+  $("videoStatus").textContent =
+    "Load the folder containing the saved video first.";
+});
+
+$("videoFull").addEventListener("click", async () => {
+  try {
+    if (document.fullscreenElement) await document.exitFullscreen();
+    else await videoPlayer.requestFullscreen();
+  } catch {
+    $("videoStatus").textContent = "Fullscreen is not available here.";
+  }
+});
+
+$("videoSpeed").addEventListener("change", () => {
+  videoPlayer.playbackRate = Number($("videoSpeed").value) || 1;
+});
+
+videoPlayer.addEventListener("timeupdate", () => {
+  if (videoIndex < 0 || !videoFiles[videoIndex]) return;
+
+  const path = pathOf(videoFiles[videoIndex]);
+  const time = String(videoPlayer.currentTime);
+  localStorage.setItem("recent_video", path);
+  localStorage.setItem("lib_time", time);
+  localStorage.setItem("videoPath", path);
+  localStorage.setItem("videoTime", time);
+});
+
+videoPlayer.addEventListener("ended", () => moveVideo(1));
+
+$("artistSelect").addEventListener("change", () => {
+  musicQueue = [];
+  musicIndex = -1;
+  currentMusicFile = null;
+  musicPlayer.pause();
+  musicPlayer.removeAttribute("src");
+  musicPlayer.load();
+
+  if (musicUrl) {
+    URL.revokeObjectURL(musicUrl);
+    musicUrl = "";
+  }
+
+  if ("mediaSession" in navigator) {
+    try {
+      navigator.mediaSession.metadata = null;
+      navigator.mediaSession.setActionHandler("nexttrack", null);
+      navigator.mediaSession.setActionHandler("previoustrack", null);
+    } catch {
+      // Ignore unsupported media-session actions.
+    }
+  }
+
+  $("musicNow").textContent = "No song selected.";
+  $("musicUpNext").textContent = "Up next: —";
+  setMusicList();
+});
+
+$("playAllOnce").addEventListener("click", playAllOnce);
+$("musicNext").addEventListener("click", nextSong);
+$("musicPrev").addEventListener("click", previousSong);
+
+$("musicPlayPause").addEventListener("click", () => {
+  if (!currentMusicFile) playAllOnce();
+  else if (musicPlayer.paused) musicPlayer.play().catch(() => {});
+  else musicPlayer.pause();
+});
+
+musicPlayer.addEventListener("ended", () => {
+  if (musicIndex + 1 < musicQueue.length) {
+    nextSong();
+  } else {
+    $("musicStatus").textContent =
+      "Finished. Every song in this list played once.";
+    $("musicUpNext").textContent = "Up next: —";
+  }
+});
+
+function stopEverything() {
+  musicPlayer.pause();
+  videoPlayer.pause();
+  musicPlayer.removeAttribute("src");
+  videoPlayer.removeAttribute("src");
+  musicPlayer.load();
+  videoPlayer.load();
+
+  if (videoUrl) {
+    URL.revokeObjectURL(videoUrl);
+    videoUrl = "";
+  }
+  if (musicUrl) {
+    URL.revokeObjectURL(musicUrl);
+    musicUrl = "";
+  }
+}
+
+window.addEventListener("beforeunload", stopEverything);
+window.addEventListener("pagehide", stopEverything);
+</script>
+</body>
+</html>
