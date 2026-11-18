@@ -8,3 +8,4 @@
 same with the text_editor_app.fap that's for flipper zero momentum firmware.
 //the text_editor_app.c script is a text editor that I was working on and made a little better but still I think it could have been better I see a lot of opportunities with this app in the fap i added xbm editing so you can make xbm images that can be used for flipper bitmaps.
 //video_music_player.html is a simple video watcher but not refined for other people stuff yet i only have somthing that helps with all of black clover and death note.Basically this for downloaded videos.
+//subghzscout.fap is for momentum firmware too haven't figured any of this stuff out yet the tying transmission to a selected file then appending to a button I can't figure this out. this has been and is the my hell right now. then I'll haft to add protocols the true living hell I wont even know where to begin.
